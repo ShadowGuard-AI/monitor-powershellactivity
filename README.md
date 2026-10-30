@@ -1,3 +1,5 @@
+![Banner](banner.png)
+
 # monitor-powershellactivity
 Monitors PowerShell execution policy and script block logging, alerting on changes that could indicate malicious activity or configuration changes. - Focused on System monitoring and alerts
 
