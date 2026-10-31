@@ -1,12 +1,10 @@
 import argparse
 import logging
 import psutil
+import shutil
 import subprocess
 import re
 import sys
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def setup_argparse():
     """
@@ -103,13 +101,26 @@ def main():
         print("Error: Interval must be a positive integer.")
         sys.exit(1)
 
-    # Configure logging to file
-    logging.basicConfig(filename=args.log_file, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    if not (args.execution_policy_check or args.script_block_logging_check or args.powershell_processes_check):
+        print("Error: No check selected. Enable at least one of --execution_policy_check, --script_block_logging_check, or --powershell_processes_check.")
+        sys.exit(1)
+
+    if shutil.which("powershell.exe") is None:
+        print("Error: powershell.exe not found. This tool requires Windows with PowerShell available on the PATH.")
+        sys.exit(1)
+
+    # Configure logging to console and to the named log file
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    file_handler = logging.FileHandler(args.log_file)
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    logging.getLogger('').addHandler(file_handler)
     logging.info("Starting PowerShell activity monitor.")
 
     # Store initial states
     previous_execution_policy = None
     previous_script_block_logging = None
+    previous_powershell_processes = set()
 
     while True:
         try:
@@ -141,10 +152,14 @@ def main():
                     logging.error("Failed to check script block logging. Skipping check.")
 
             if args.powershell_processes_check:
-              powershell_processes = monitor_powershell_processes()
-              if powershell_processes:
-                logging.info(f"Active PowerShell processes: {powershell_processes}")
-                print(f"Active PowerShell processes: {powershell_processes}")
+              current_powershell_processes = set(monitor_powershell_processes())
+              for name, pid in sorted(current_powershell_processes - previous_powershell_processes):
+                logging.info(f"PowerShell process started: {name} (PID {pid})")
+                print(f"PowerShell process started: {name} (PID {pid})")
+              for name, pid in sorted(previous_powershell_processes - current_powershell_processes):
+                logging.info(f"PowerShell process stopped: {name} (PID {pid})")
+                print(f"PowerShell process stopped: {name} (PID {pid})")
+              previous_powershell_processes = current_powershell_processes
 
             import time
             time.sleep(args.interval)
