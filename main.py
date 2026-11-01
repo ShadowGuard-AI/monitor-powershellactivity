@@ -30,6 +30,11 @@ def get_execution_policy():
         str: The execution policy string, or None if an error occurs.
     """
     try:
+        # Get-ExecutionPolicy with no scope reports the effective
+        # policy, the end result of every scope layered together. A
+        # change in a scope that is being overridden higher up is
+        # invisible to me, and so is a per process policy, because
+        # the powershell I launch to ask starts under its own.
         result = subprocess.run(["powershell.exe", "-Command", "Get-ExecutionPolicy"], capture_output=True, text=True, check=True)
         return result.stdout.strip()
     except subprocess.CalledProcessError as e:
@@ -55,6 +60,13 @@ def check_script_block_logging():
 
         # Check for a valid numeric value.
         if output.isdigit():
+            # Reaching this line is the rare path. When the policy value
+            # is not set at all, which is the ordinary state of a machine
+            # without a group policy for it, the Get-ItemProperty call
+            # above fails and the function returns None in the handlers
+            # below, so the monitor logs a failed check every cycle and
+            # never establishes a baseline for this check at all. Only a
+            # machine where someone set the value gets a verdict.
             return bool(int(output))
         else:
             logging.warning(f"Unexpected output from ScriptBlockLogging registry check: {output}")
@@ -81,6 +93,11 @@ def monitor_powershell_processes():
     powershell_processes = []
     for process in psutil.process_iter(['pid', 'name']):
         try:
+            # The name test is a substring, and it cuts both ways: any
+            # process with powershell anywhere in its name counts, while
+            # pwsh, the name PowerShell 7 actually runs under, does not
+            # contain it and is never reported. A modern PowerShell
+            # session is invisible to this check.
             if "powershell" in process.info['name'].lower():
                 powershell_processes.append((process.info['name'], process.info['pid']))
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
@@ -153,6 +170,12 @@ def main():
 
             if args.powershell_processes_check:
               current_powershell_processes = set(monitor_powershell_processes())
+              # Unlike the two policy checks above, which take their first
+              # reading silently as a baseline, this check starts from an
+              # empty set, so every PowerShell process already running when
+              # I start is announced as newly started. The identity is name
+              # plus pid, so a pid reused between polls also reads as one
+              # process stopping and another starting.
               for name, pid in sorted(current_powershell_processes - previous_powershell_processes):
                 logging.info(f"PowerShell process started: {name} (PID {pid})")
                 print(f"PowerShell process started: {name} (PID {pid})")
@@ -161,6 +184,9 @@ def main():
                 print(f"PowerShell process stopped: {name} (PID {pid})")
               previous_powershell_processes = current_powershell_processes
 
+            # The import lives inside the loop, re-executed on every
+            # cycle. It costs almost nothing, and it marks where this
+            # file grew by accretion rather than by design.
             import time
             time.sleep(args.interval)
 
